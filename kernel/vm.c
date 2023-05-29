@@ -42,9 +42,6 @@ kvmmake(void)
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
-
-  // allocate and map a kernel stack for each process.
-  proc_mapstacks(kpgtbl);
   
   return kpgtbl;
 }
@@ -61,13 +58,7 @@ kvminit(void)
 void
 kvminithart()
 {
-  // wait for any previous writes to the page table memory to finish.
-  sfence_vma();
-
-  w_satp(MAKE_SATP(kernel_pagetable));
-
-  // flush stale entries from the TLB.
-  sfence_vma();
+  setpgtbl(kernel_pagetable);
 }
 
 // Return the address of the PTE in page table pagetable
@@ -476,4 +467,83 @@ vmprint(pagetable_t pagetable)
 {
   printf("page table %p\n", pagetable);
   _vmprint(pagetable, 1);
+}
+
+// create a process's kernel page table
+// returns 0 if out of memory
+pagetable_t
+ukvmmake()
+{
+  pagetable_t pgtbl;
+
+  if ((pgtbl = uvmcreate()) == 0){
+    return 0;
+  }
+  // uart registers
+  if(mappages(pgtbl, UART0, PGSIZE, UART0, PTE_R | PTE_W) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+  
+  // virtio mmio disk interface
+  if(mappages(pgtbl, VIRTIO0, PGSIZE, VIRTIO0, PTE_R | PTE_W) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+
+  // PLIC
+  if(mappages(pgtbl, PLIC, 0x400000, PLIC, PTE_R | PTE_W) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+  
+  // map kernel text executable and read-only.
+  if(mappages(pgtbl, KERNBASE, (uint64)etext-KERNBASE, KERNBASE, PTE_R | PTE_X) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+
+  // map kernel data and the physical RAM we'll make use of.
+  if(mappages(pgtbl, (uint64)etext, PHYSTOP-(uint64)etext, (uint64)etext, PTE_R | PTE_W) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  if(mappages(pgtbl, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X) != 0){
+    ukvmfree(pgtbl);
+    return 0;
+  }
+
+  return pgtbl;
+}
+
+void 
+ukvmfree(pagetable_t pgtbl)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pgtbl[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      ukvmfree((pagetable_t)child);
+    }
+    pgtbl[i] = 0;
+  }
+  kfree((void*)pgtbl); 
+}
+
+// enable paging by setting satp to pgtbl
+void
+setpgtbl(pagetable_t pgtbl)
+{
+  // wait for any previous writes to the page table memory to finish.
+  sfence_vma();
+
+  w_satp(MAKE_SATP(pgtbl));
+
+  // flush stale entries from the TLB.
+  sfence_vma();
 }

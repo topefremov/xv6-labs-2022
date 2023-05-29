@@ -26,23 +26,6 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
-// Allocate a page for each process's kernel stack.
-// Map it high in memory, followed by an invalid
-// guard page.
-void
-proc_mapstacks(pagetable_t kpgtbl)
-{
-  struct proc *p;
-  
-  for(p = proc; p < &proc[NPROC]; p++) {
-    char *pa = kalloc();
-    if(pa == 0)
-      panic("kalloc");
-    uint64 va = KSTACK((int) (p - proc));
-    kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-  }
-}
-
 // initialize the proc table.
 void
 procinit(void)
@@ -54,7 +37,7 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
-      p->kstack = KSTACK((int) (p - proc));
+      p->kstack = KSTACK;
   }
 }
 
@@ -149,6 +132,26 @@ found:
     return 0;
   }
 
+  p->kernel_pagetable = ukvmmake();
+  if(p->kernel_pagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // allocate and map a kernel stack for a process.
+  if((p->kstackp = kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  if(mappages(p->kernel_pagetable, KSTACK, PGSIZE, (uint64)p->kstackp, PTE_R | PTE_W) != 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -169,10 +172,17 @@ freeproc(struct proc *p)
   p->usyscall = 0;  
   if(p->trapframe)
     kfree((void*)p->trapframe);
-  p->trapframe = 0;
+  p->trapframe = 0;  
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if(p->kstackp)
+    kfree(p->kstackp);
+  p->kstackp = 0;
+  if(p->kernel_pagetable) {
+    ukvmfree(p->kernel_pagetable);
+  }
+  p->kernel_pagetable = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -217,6 +227,7 @@ proc_pagetable(struct proc *p)
   // map the usyscall page just below the trapframe page
   if (mappages(pagetable, USYSCALL, PGSIZE, 
                (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);            
     uvmunmap(pagetable, TRAPFRAME, 1, 0);
     uvmfree(pagetable, 0);  
     return 0;
@@ -476,12 +487,18 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        if(p->kernel_pagetable == 0)
+          panic("scheduler_kernel_pagetable_null");
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // Switch page table to the process's kernel page table
+        setpgtbl(p->kernel_pagetable);
         swtch(&c->context, &p->context);
+        // Switch page table to the global kernel_pagetable
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

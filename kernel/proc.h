@@ -96,13 +96,15 @@ struct proc {
   struct proc *parent;         // Parent process
 
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;               // Virtual address of kernel stack
-  uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
-  struct trapframe *trapframe; // data page for trampoline.S
-  struct usyscall *usyscall;   // data page for usyscall
-  struct context context;      // swtch() here to run process
-  struct file *ofile[NOFILE];  // Open files
-  struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  uint64 kstack;                // Virtual address of kernel stack
+  void* kstackp;                // data page for process's kernel stack
+  uint64 sz;                    // Size of process memory (bytes)
+  pagetable_t pagetable;        // User page table
+  pagetable_t kernel_pagetable; // Process's kernel page talbe
+  struct trapframe *trapframe;  // data page for trampoline.S
+  struct usyscall *usyscall;    // data page for usyscall
+  struct context context;       // swtch() here to run process
+  struct file *ofile[NOFILE];   // Open files
+  struct inode *cwd;            // Current directory
+  char name[16];                // Process name (debugging)
 };
