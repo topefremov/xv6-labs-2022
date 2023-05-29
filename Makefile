@@ -190,6 +190,8 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 	$U/_test\
+	$U/_sysinfotest\
+	$U/_sysinfo
 
 
 
