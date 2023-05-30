@@ -44,6 +44,9 @@ sys_sbrk(void)
 
   argint(0, &n);
   addr = myproc()->sz;
+  // don't grow above PLIC
+  if ((addr + n) >= PLIC)
+    return -1;
   if(growproc(n) < 0)
     return -1;
   return addr;

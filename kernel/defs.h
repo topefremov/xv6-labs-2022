@@ -178,6 +178,7 @@ void            vmprint(pagetable_t);
 pagetable_t     ukvmmake();
 void            ukvmfree(pagetable_t);
 void            setpgtbl(pagetable_t);
+int             ukvmcopy(pagetable_t, pagetable_t, uint64, uint64);
 
 // plic.c
 void            plicinit(void);

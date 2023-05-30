@@ -274,6 +274,10 @@ userinit(void)
   uvmfirst(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  // copy process's user memory to kernel page table
+  if(ukvmcopy(p->pagetable, p->kernel_pagetable, 0, p->sz) < 0)
+    panic("userinit: ukvmcopy");
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -291,18 +295,28 @@ userinit(void)
 int
 growproc(int n)
 {
-  uint64 sz;
+  uint64 oldsz, newsz;
   struct proc *p = myproc();
 
-  sz = p->sz;
+  oldsz = p->sz;
+  newsz = oldsz + n;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    if((newsz = uvmalloc(p->pagetable, oldsz, newsz, PTE_W)) == 0)
+      return -1;
+    // copy mappings to the process's kernel page table  
+    if(ukvmcopy(p->pagetable, p->kernel_pagetable, oldsz, newsz) < 0) {
+      uvmdealloc(p->pagetable, newsz, oldsz);
       return -1;
     }
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    // unmap process's kernel page table mappings
+    newsz = uvmdealloc(p->pagetable, oldsz, newsz);
+    if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+      int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+      uvmunmap(p->kernel_pagetable, PGROUNDUP(newsz), npages, 0);
+    }
   }
-  p->sz = sz;
+  p->sz = newsz;
   return 0;
 }
 
@@ -326,6 +340,14 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  // Copy user page table into process's kernel page table
+  if(ukvmcopy(np->pagetable, np->kernel_pagetable, 0, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
   np->sz = p->sz;
 
   // copy saved user registers.

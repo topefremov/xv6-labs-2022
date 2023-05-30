@@ -128,6 +128,12 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+  // unmap old process's user memory from 0 to oldsz
+  uvmunmap(p->kernel_pagetable, 0, PGROUNDUP(oldsz)/PGSIZE, 0);
+  // map new process's user memory
+  if(ukvmcopy(p->pagetable, p->kernel_pagetable, 0, p->sz) < 0)
+    goto bad;
+
   if(p->pid == 1)
     vmprint(p->pagetable);
 
@@ -136,6 +142,7 @@ exec(char *path, char **argv)
  bad:
   if(pagetable)
     proc_freepagetable(pagetable, sz);
+  uvmunmap(p->kernel_pagetable, 0, PGROUNDUP(sz)/PGSIZE, 0);  
   if(ip){
     iunlockput(ip);
     end_op();
