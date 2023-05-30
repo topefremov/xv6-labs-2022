@@ -132,7 +132,7 @@ found:
     return 0;
   }
 
-  p->kernel_pagetable = ukvmmake();
+  p->kernel_pagetable = ukvmmake_pgtbl();
   if(p->kernel_pagetable == 0){
     freeproc(p);
     release(&p->lock);
@@ -180,7 +180,7 @@ freeproc(struct proc *p)
     kfree(p->kstackp);
   p->kstackp = 0;
   if(p->kernel_pagetable) {
-    ukvmfree(p->kernel_pagetable);
+    ukvmfree_pgtbl(p->kernel_pagetable);
   }
   p->kernel_pagetable = 0;
   p->sz = 0;
@@ -271,12 +271,8 @@ userinit(void)
   
   // allocate one user page and copy initcode's instructions
   // and data into it.
-  uvmfirst(p->pagetable, initcode, sizeof(initcode));
+  uvmfirst(p->pagetable, p->kernel_pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-
-  // copy process's user memory to kernel page table
-  if(ukvmcopy(p->pagetable, p->kernel_pagetable, 0, p->sz) < 0)
-    panic("userinit: ukvmcopy");
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -301,20 +297,12 @@ growproc(int n)
   oldsz = p->sz;
   newsz = oldsz + n;
   if(n > 0){
-    if((newsz = uvmalloc(p->pagetable, oldsz, newsz, PTE_W)) == 0)
+    if((newsz = uvmalloc(p->pagetable, p->kernel_pagetable, oldsz, newsz, PTE_W)) == 0)
       return -1;
-    // copy mappings to the process's kernel page table  
-    if(ukvmcopy(p->pagetable, p->kernel_pagetable, oldsz, newsz) < 0) {
-      uvmdealloc(p->pagetable, newsz, oldsz);
-      return -1;
-    }
   } else if(n < 0){
     // unmap process's kernel page table mappings
     newsz = uvmdealloc(p->pagetable, oldsz, newsz);
-    if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
-      int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
-      uvmunmap(p->kernel_pagetable, PGROUNDUP(newsz), npages, 0);
-    }
+    ukvmdealloc(p->kernel_pagetable, oldsz, newsz);
   }
   p->sz = newsz;
   return 0;
@@ -335,14 +323,7 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
-  }
-
-  // Copy user page table into process's kernel page table
-  if(ukvmcopy(np->pagetable, np->kernel_pagetable, 0, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, np->kernel_pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
