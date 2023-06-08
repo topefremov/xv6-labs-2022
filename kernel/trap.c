@@ -77,8 +77,18 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
+    if(p->alarmstate.ticks > 0 && !p->alarmstate.invoked){
+      if(++p->alarmstate.passed_ticks > p->alarmstate.ticks) {
+        // save registers
+        p->alarmstate.trapframe = *p->trapframe;
+        // make usercode to jump to the handler function
+        p->trapframe->epc = p->alarmstate.handler;
+        p->alarmstate.invoked = 1;
+      }
+    }
     yield();
+  }
 
   usertrapret();
 }

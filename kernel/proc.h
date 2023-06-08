@@ -81,6 +81,15 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+struct alarmstate {
+  int ticks; // how many ticks should pass before calling the handler function
+  uint64 handler; // handler function address in userspace, can be null
+  int passed_ticks; // how many ticks have passed since the last call to the handler function
+  int invoked; // is handler function being invoked now
+  // user code registers before calling the handler function
+  struct trapframe trapframe;
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -96,12 +105,13 @@ struct proc {
   struct proc *parent;         // Parent process
 
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;               // Virtual address of kernel stack
-  uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
-  struct trapframe *trapframe; // data page for trampoline.S
-  struct context context;      // swtch() here to run process
-  struct file *ofile[NOFILE];  // Open files
-  struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  uint64 kstack;                // Virtual address of kernel stack
+  uint64 sz;                    // Size of process memory (bytes)
+  pagetable_t pagetable;        // User page table
+  struct trapframe *trapframe;  // data page for trampoline.S
+  struct context context;       // swtch() here to run process
+  struct alarmstate alarmstate; // State for syscalls sigalarm and sigreturn
+  struct file *ofile[NOFILE];   // Open files
+  struct inode *cwd;            // Current directory
+  char name[16];                // Process name (debugging)
 };

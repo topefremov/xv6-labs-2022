@@ -146,6 +146,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // initialize alarm state
+  memset(&p->alarmstate, 0, sizeof(p->alarmstate));
+
   return p;
 }
 
@@ -168,6 +171,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  memset(&p->alarmstate, 0, sizeof(p->alarmstate));
   p->state = UNUSED;
 }
 

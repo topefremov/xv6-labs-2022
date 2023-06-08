@@ -324,7 +324,16 @@ static inline void
 sfence_vma()
 {
   // the zero, zero means flush all TLB entries.
-  asm volatile("sfence.vma zero, zero");
+  asm 
+  volatile("sfence.vma zero, zero");
+}
+
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
 }
 
 typedef uint64 pte_t;
@@ -361,3 +370,8 @@ typedef uint64 *pagetable_t; // 512 PTEs
 // Sv39, to avoid having to sign-extend virtual addresses
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
+
+// get the return address from the frame pointer fp
+#define RA(fp) (fp - 8)
+// get the previous frame pointer from the frame pointer fp
+#define SFP(fp) (fp - 16)

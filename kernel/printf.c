@@ -133,3 +133,14 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+void
+backtrace(void)
+{
+  uint64 fp, pg;
+  fp = r_fp();
+  pg = PGROUNDDOWN(fp);
+  printf("backtrace:\n");
+  for(; fp > pg; fp = *((uint64*)SFP(fp)))
+    printf("%p\n", *((uint64*)RA(fp)));
+}
