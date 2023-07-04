@@ -78,25 +78,10 @@ usertrap(void)
     // an interrupt will change sepc, scause, and sstatus,
     // so enable only now that we're done with those registers.
     intr_on();
-    if(va >= MAXVA){
+    if(va >= MAXVA || (pte = walk(p->pagetable, va, 0)) == 0 || (*pte & PTE_RSW) == 0 
+       || cow(p->pagetable, pte, va) < 0){
      setkilled(p);
      exit(-1);
-    }
-
-    if((pte = walk(p->pagetable, va, 0)) == 0){
-      setkilled(p);
-      exit(-1);
-    }
-
-    if ((*pte & PTE_RSW) == 0){
-      setkilled(p);
-      exit(-1);
-    }
-
-    // cow
-    if (cow(p->pagetable, pte, va) < 0){
-      setkilled(p);
-      exit(-1);
     }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
