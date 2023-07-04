@@ -5,6 +5,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +15,9 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+extern int ref_count[PHYSTOP/PGSIZE];
+extern struct spinlock ref_count_lock;
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -307,8 +311,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -316,20 +318,19 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+    acquire(&ref_count_lock);
+    ref_count[pa/PGSIZE]++;
+    release(&ref_count_lock);
+    if(*pte & PTE_W){
+      *pte &= ~PTE_W; // clear PTE_W flag
+      *pte |= PTE_RSW;
+    }
+    if((mappages(new, i, PGSIZE, pa, PTE_FLAGS(*pte))) != 0){
+      uvmunmap(new, 0, i / PGSIZE, 1);
+      return -1;
     }
   }
   return 0;
-
- err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
 }
 
 // mark a PTE invalid for user access.
@@ -352,9 +353,17 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if (va0 > MAXVA)
+      return -1;
+    pte = walk(pagetable, va0, 0);
+    if (pte && (*pte & PTE_RSW)){
+      // cow
+      cow(pagetable, pte, va0);
+    }
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -436,4 +445,25 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int cow(pagetable_t pagetable, pte_t* pte, uint64 va)
+{
+  void* mem;
+  uint64 pa;
+  pa = PTE2PA(*pte);
+  if((*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 || (mem = kalloc()) == 0)
+    return -1;
+  
+  memmove(mem, (void*) pa, PGSIZE);
+  uint perm = PTE_FLAGS(*pte) | PTE_W; // set PTE_W flag
+  perm &= ~PTE_RSW; // clear cow flag
+  va = PGROUNDDOWN(va);
+  uvmunmap(pagetable, va, 1, 1);
+  
+  if((mappages(pagetable, va, PGSIZE, (uint64)mem, perm)) < 0){
+    kfree(mem);
+    return -1;
+  }
+  return 0;
 }
